@@ -1,0 +1,7 @@
+vendor/
+composer.lock
+
+public/*
+!public/index.html
+!public/index.php
+!public/.htaccess

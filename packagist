@@ -1,0 +1,19 @@
+#!/usr/bin/env php
+<?php
+
+use zwcway\Packagist\Log;
+use zwcway\Packagist\Packagist;
+
+if (php_sapi_name() !== 'cli') {
+  exit('Only CLI');
+}
+
+require __DIR__ . '/vendor/autoload.php';
+
+$dir = __DIR__ . '/public';
+is_dir($dir) OR mkdir($dir, 0755);
+is_writable($dir) OR Log::terminal(1, 'Write ', $dir, ' Permission denied');
+chdir($dir);
+
+$packagist = new Packagist();
+Log::info($packagist->runCli($argc, $argv));
