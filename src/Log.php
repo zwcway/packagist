@@ -34,4 +34,15 @@ class Log {
   public static function debug() {
     self::$debug AND fwrite(STDOUT, implode('', func_get_args()) . PHP_EOL);
   }
+
+  public static function progress($title, $current, $total) {
+    $percent = ($current / $total);
+    $length = 20;
+    $isEnd = $current >= $total;
+
+    $progress = str_repeat('#', min($length, $percent * $length));
+    $progress = str_pad($progress, $length, '-', STR_PAD_RIGHT);
+
+    fwrite(STDOUT, $title . " [$progress]($current/$total " . ceil($percent * 100) ."%)" . ($isEnd ? PHP_EOL : "\r"));
+  }
 }

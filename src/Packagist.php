@@ -6,10 +6,6 @@ define('D', DIRECTORY_SEPARATOR);
 class Packagist {
   public $base = 'https://packagist.org/';
   public $encrypt = 'sha256';
-  /**
-   * @var MultiCurl
-   */
-  protected $multiCurl;
   protected $providers_url = '';
   protected $uri;
   protected $dumps = [];
@@ -144,7 +140,7 @@ class Packagist {
    * @return array
    */
   protected function dumpPackages() {
-    $packagesJson = $this->get('packages.json', '', TRUE);
+    $packagesJson = $this->get('packages.json', '', FALSE);
     $packages = json_decode($packagesJson, TRUE);
     $packages['updated'] = date(DATE_W3C);
     unset($packages['search']);
@@ -166,9 +162,8 @@ class Packagist {
       $name = str_replace('%hash%', reset($hash), $key);
       $names[] = $name;
     }
-    $this->dumps = [];
-    $this->multiDump($names);
-    return $this->dumps;
+
+    return $this->multiDump($names);
   }
 
   /**
@@ -183,24 +178,28 @@ class Packagist {
       $cleans = [];
       $include = json_decode($this->get($name), TRUE);
       foreach ($include['providers'] as $key => $hash) {
-        $name = ltrim(
+        $pgkName = ltrim(
           str_replace(
             ['%hash%', '%package%'],
             [reset($hash), $key],
             $this->providers_url),
           '/');
-        $packages[] = $name;
-        $cleans[$name] = $key;
+        $packages[] = $pgkName;
+
+        $cleans[$pgkName] = ltrim(
+          str_replace(
+            ['%hash%', '%package%'],
+            ['*', $key],
+            $this->providers_url),
+          '/');
       }
-      $this->dumps = [];
-      $this->multiDump($packages);
       $providers = [];
-      foreach ($this->dumps as $name) {
-        if (isset($cleans[$name])) {
-          $providers[] = 'p/' . dirname($cleans[$name]);
-        }
-        else {
-          echo "$name not found";
+      Log::info("Dumping $name");
+      foreach ($this->multiDump($packages) as $pgkName) {
+        if (isset($cleans[$pgkName])) {
+          $providers[] = $this->redir($cleans[$pgkName]);
+        } else {
+          Log::info("$pgkName not found");
         }
       }
       $this->cleanPackages($providers);
@@ -232,14 +231,18 @@ class Packagist {
       $dir = glob($dir);
     }
     foreach ($dir as $provider) {
+      $packages = [];
+      $files = [];
       if (is_dir($provider)) {
-        $packages = [];
-        foreach (glob($provider . '/*') as $package) {
-          $packages[strstr($package, '$', TRUE)][$package] = filectime(
-            $package);
-        }
-        $this->filterUnlink($packages);
+        $files = glob("$provider/*");
+      } else {
+        $files = glob($provider);
       }
+      foreach ($files as $package) {
+        $packages[$package] = filectime(
+          $package);
+      }
+      $this->filterUnlink($packages);
     }
   }
 
@@ -296,16 +299,15 @@ class Packagist {
    * @param $set
    */
   protected function filterUnlink($set) {
+    if (count($set) <= 1) return;
+
     $now = time();
-    foreach ($set as $list) {
-      arsort($list);
-      foreach (array_slice($list, 2) as $name => $time) {
-        if ($now - $time > 86400) {
-          $realname = $this->redir($name);
-          $dirname = dirname($realname);
-          echo "unlink {$dirname} {$name}\n";
-          @unlink($realname);
-        }
+    foreach ($set as $name => $time) {
+      if ($now - $time > 86400) {
+        $realname = $this->redir($name);
+        $dirname = dirname($realname);
+        Log::info("unlink {$dirname} {$name}\n");
+        @unlink($realname);
       }
     }
   }
@@ -315,11 +317,14 @@ class Packagist {
    *
    * @param array $names
    * @param bool  $force
+   *
+   * @return array
    */
   protected function multiDump(array $names, $force = FALSE) {
-    $curl = extension_loaded('curl');
-    if ($curl && !$this->multiCurl) {
-      $this->multiCurl = new MultiCurl(100);
+    $multiCurl = NULL;
+
+    if (extension_loaded('curl')) {
+      $multiCurl = new MultiCurl(100);
       $options = [
         CURLOPT_SSL_VERIFYPEER => FALSE,
       ];
@@ -327,17 +332,28 @@ class Packagist {
         $options[CURLOPT_PROXY] = $proxy;
       }
 
-      $this->multiCurl->setOptions($options);
-      $this->multiCurl->setTimeout(60000);
+      $multiCurl->setOptions($options);
+      $multiCurl->setTimeout(60000);
     }
 
-    foreach ($names as $name) {
-      $this->dumpFile($name, '', $force, $curl);
+    $downloaded = [];
+    $progress = 0;
+    $count = count($names);
+    foreach ($names as $i => $name) {
+      $this->dumpFile($name, '', $force, $multiCurl, function($name, $download)
+      use (&$progress, $count, &$downloaded) {
+        $downloaded[] = $name;
+        Log::progress('Downloading', $progress++, $count);
+      });
     }
 
-    if ($curl) {
-      $this->multiCurl->execute();
+    if ($multiCurl) {
+      $multiCurl->execute();
     }
+
+    unset($multiCurl, $names);
+
+    return $downloaded;
   }
 
   /**
@@ -391,9 +407,11 @@ class Packagist {
     list($dirname, $pkgname) = $this->dirname($name);
     if ($dirname) {
       list($dirname, $username) = $this->dirname($dirname);
-      $dirname = $dirname . '/' . $username{0};
+
+      $dirname AND $dirname .= '/' . $username{0};
       isset($username[1]) AND $dirname .= '/' . $username{1};
-      $realname = $dirname . '/' . $pkgname;
+
+      $realname = $dirname . '/' . $username . '/' . $pkgname;
       $realname{0} === '/' AND $realname = substr($realname, 1);
     }
 
@@ -403,10 +421,12 @@ class Packagist {
   /**
    * 从远程服务器下载文件
    *
-   * @param        $name
-   * @param string $hash
-   * @param bool   $force
-   * @param bool   $curl
+   * @param                $name
+   * @param string         $hash
+   * @param bool           $force
+   * @param MultiCurl|null $multiCurl
+   *
+   * @param \Closure       $callback
    *
    * @return bool
    */
@@ -414,35 +434,40 @@ class Packagist {
     $name,
     $hash = '',
     $force = FALSE,
-    $curl = FALSE
+    MultiCurl $multiCurl = NULL,
+    \Closure $callback = NULL
   ) {
     if ($this->retry >= 5) {
       Log::terminal(500, 'Retry Limited');
     }
-    if (!$force && file_exists($name)) {
+    $realname = $this->redir($name);
+    Log::debug("File '$name': '$realname'");
+
+    if (!$force && file_exists($realname)) {
+      Log::debug("$realname exists\n");
+      $callback AND $callback($name, FALSE);
       return FALSE;
     }
     try {
-      $realname = $this->redir($name);
-      Log::debug("File '$name': '$realname'");
       list($dirname, $basename) = $this->dirname($realname);
       if ($dirname && !file_exists($dirname)) {
         Log::debug("Folder '$dirname' not exists, create it.");
         mkdir($dirname, 0755, TRUE);
       }
-      if ($curl) {
-        $this->multiCurl->addRequest(
+      if ($multiCurl) {
+        $multiCurl->addRequest(
           $this->url($name),
           NULL,
           function ($response, $url, $request_info, $user_data, $time) use (
             $name,
             $realname,
-            $dirname
+            $dirname,
+            $callback
           ) {
             if ($response) {
-              $this->dumps[] = $name;
               file_put_contents($realname, $response);
-              Log::info($name . " wrote ($realname)");
+              Log::debug($name . " wrote ($realname)");
+              $callback AND $callback($name, true);
             }
           }
         );
@@ -454,6 +479,7 @@ class Packagist {
             'http' => array(
               'proxy'            => $proxy,
               'request_fullname' => TRUE,
+              'timeout'          => 60
             ),
           );
           $cxContext = stream_context_create($aContext);
@@ -472,7 +498,8 @@ class Packagist {
           Log::terminal(500, 'hash error');
         }
         file_put_contents($name, $content);
-        Log::info($name . " wrote");
+        Log::debug($name . " wrote");
+        $callback AND $callback($name, true);
       }
     } catch (\Exception $e) {
       if (isset($http_response_header)) {
@@ -489,7 +516,7 @@ class Packagist {
         Log::info("Retring " . $this->url($name));
         sleep(2);
         $this->retry++;
-        $this->dumpFile($name, $hash, $force, $curl);
+        $this->dumpFile($name, $hash, $force, $multiCurl);
         $this->retry = 0;
       }
     }

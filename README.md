@@ -46,7 +46,7 @@ php packagist da
 Nginx 的配置为
 
 ```
-rewrite ^/p/((\w)(\w)[-_\w]+/.+)$  /p/$2/$3/$1 last;
+rewrite ^/p/((\w)(\w)[-_\w/]+)$  /p/$2/$3/$1 last;
 ```
 
 Apache 的配置见 public/.htaccess，具体内容如下
@@ -54,7 +54,7 @@ Apache 的配置见 public/.htaccess，具体内容如下
 ```
 RewriteEngine On
 RewriteCond %{REQUEST_FILENAME} !-f
-RewriteRule ^((\w)(\w)[-_\w]+/.+)$ $2/$3/$1 [L]
+RewriteRule ^((\w)(\w)[-_\w/]+)$ $2/$3/$1 [L]
 ```
 
 ## 配置 composer
