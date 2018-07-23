@@ -214,8 +214,7 @@ class Packagist {
     $providers = [];
     foreach (glob('p/provider-*') as $provider) {
       if (is_file($provider)) {
-        $providers[strstr($provider, '$', TRUE)][$provider] = filectime(
-          $provider);
+        $providers[$provider] = filectime($provider);
       }
     }
     $this->filterUnlink($providers);
@@ -239,8 +238,7 @@ class Packagist {
         $files = glob($provider);
       }
       foreach ($files as $package) {
-        $packages[$package] = filectime(
-          $package);
+        $packages[$package] = filectime($package);
       }
       $this->filterUnlink($packages);
     }
