@@ -140,7 +140,7 @@ class Packagist {
    * @return array
    */
   protected function dumpPackages() {
-    $packagesJson = $this->get('packages.json', '', FALSE);
+    $packagesJson = $this->get('packages.json', '', TRUE);
     $packages = json_decode($packagesJson, TRUE);
     $packages['updated'] = date(DATE_W3C);
     unset($packages['search']);
@@ -304,7 +304,7 @@ class Packagist {
       if ($now - $time > 86400) {
         $realname = $this->redir($name);
         $dirname = dirname($realname);
-        Log::info("unlink {$dirname} {$name}\n");
+        Log::info("unlink $realname\n");
         @unlink($realname);
       }
     }
